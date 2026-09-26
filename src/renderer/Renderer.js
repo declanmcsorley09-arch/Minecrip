@@ -151,6 +151,9 @@ export class Renderer {
   /** Releases the WebGL context and listeners. */
   dispose() {
     window.removeEventListener('resize', this.onResize);
+    // The canvas keeps its GL context for the next session's renderer, whose
+    // state cache assumes defaults: restore them (pixel store flags etc.).
+    this.webgl.state.reset();
     this.webgl.dispose();
   }
 }

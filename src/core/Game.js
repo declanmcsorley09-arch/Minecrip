@@ -36,6 +36,7 @@ import { MusicSystem } from '../audio/MusicSystem.js';
 import { blockRegistry } from '../blocks/index.js';
 import { itemRegistry } from '../items/index.js';
 import { InputManager } from '../player/InputManager.js';
+import { Profiler } from '../utils/Profiler.js';
 
 const FIXED_DT = 1 / 60;
 const SHADOW_SIZES = { low: 1024, medium: 2048, high: 4096 };
@@ -85,6 +86,7 @@ export class Game extends EventEmitter {
     this.eye = new THREE.Vector3();
     this.sunFocus = new THREE.Vector3();
     this.loop = new GameLoop((dt) => this.frame(dt));
+    this.profiler = new Profiler();
     this.settingsListener = (key, value) => this.applySetting(key, value);
   }
 
@@ -401,6 +403,8 @@ export class Game extends EventEmitter {
 
     if (!this.ready) this.checkReady();
 
+    const prof = this.profiler;
+    prof.begin('physics');
     if (this.ready && !this.paused) {
       if (this.input.locked) this.controller.updateLook(s.get('mouseSensitivity'), s.get('invertY'));
       this.accumulator += dt;
@@ -418,9 +422,14 @@ export class Game extends EventEmitter {
       }
     }
 
+    prof.end();
     if (simulate) {
+      prof.begin('server');
       this.server.update(dt);
+      prof.end();
+      prof.begin('network');
       this.client.pump();
+      prof.end();
       this.cycle.update(dt);
       this.weather.update(dt);
       if (this.pendingLightning) {
@@ -435,14 +444,21 @@ export class Game extends EventEmitter {
     cam.getWorldDirection(this.lookDir);
     this.eye.copy(cam.position);
 
+    prof.begin('interaction');
     if (this.ready && !this.paused) {
       this.interaction.update(dt, this.eye, this.lookDir);
       this.pickup.update(dt);
     }
+    prof.end();
 
     // Streaming and meshing continue while paused so the world fills in.
+    prof.begin('streaming');
     this.streamer.update(p.position.x, p.position.z);
+    prof.end();
+    prof.begin('meshing');
     this.chunkRenderer.update(cam);
+    prof.end();
+    prof.begin('effects');
 
     const underwater = p.eyeInWater;
     this.atmosphere.update(dt, this.cycle, this.weather, { renderDistance: s.get('renderDistance'), underwater, viewDir: this.lookDir });
@@ -453,7 +469,10 @@ export class Game extends EventEmitter {
     this.clouds.update(dt, cam, this.atmosphere.state, this.weather.rain);
     this.weatherRenderer.update(dt, cam.position, this.weather.rain, this.cycle.daylight, this.time);
     this.particles.update(dt, this.cycle.skyLightFactor);
+    prof.end();
+    prof.begin('entities');
     this.entityRenderer.update(dt);
+    prof.end();
     this.highlight.update(this.ready && !this.paused ? this.interaction.target : null, this.interaction.crackStage);
     this.sunFocus.set(p.position.x, p.position.y, p.position.z);
     this.renderer.updateSun(this.sunFocus, this.atmosphere.state.lightDir);
@@ -471,6 +490,7 @@ export class Game extends EventEmitter {
       aspect: this.renderer.camera.aspect,
     });
 
+    prof.begin('audio');
     if (this.audio) {
       this.audio.setListener(cam, this.lookDir);
       this.audio.setUnderwater(underwater);
@@ -485,9 +505,12 @@ export class Game extends EventEmitter {
       });
       this.music.update(dt);
     }
+    prof.end();
 
+    prof.begin('render');
     this.renderer.render();
     if (this.ready && !p.dead && !this.hideHand) this.heldItem.render(this.renderer.webgl);
+    prof.end();
 
     if (this.ready && this.storage) {
       this.autosaveTimer += dt;
@@ -600,6 +623,7 @@ export class Game extends EventEmitter {
       memory: mem,
       chunkMemory: chunkMem,
       gameMode: p.gameMode,
+      profile: this.profiler.top(6),
       target: t ? `${blockRegistry.get(t.id).displayName} @ ${t.x} ${t.y} ${t.z}` : null,
     };
   }

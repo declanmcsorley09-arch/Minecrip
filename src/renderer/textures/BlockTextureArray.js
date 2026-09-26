@@ -131,10 +131,12 @@ export class BlockTextureArray {
     const props = renderer.properties.get(this.texture);
     const glTex = props.__webglTexture;
     if (!glTex) return;
-    renderer.state.bindTexture(gl.TEXTURE_2D_ARRAY, glTex);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    const state = renderer.state;
+    state.bindTexture(gl.TEXTURE_2D_ARRAY, glTex);
+    // Go through the state cache so three.js stays in sync with the GL flags.
+    state.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    state.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    state.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     for (let l = 1; l < LEVELS; l++) {
       const s = SIZE >> l;
       gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, l, 0, 0, 0, s, s, this.count, gl.RGBA, gl.UNSIGNED_BYTE, this.levels[l]);

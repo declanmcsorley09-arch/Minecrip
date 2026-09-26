@@ -280,12 +280,49 @@ await step('debug overlay + night + mobs', async () => {
   await page.screenshot({ path: `${outDir}/08-debug-night-mobs.png` });
 });
 
+let snapshot;
 await step('save and quit', async () => {
+  snapshot = await page.evaluate(() => {
+    const g = window.__app.game;
+    const inv = g.player.inventory.toJSON().filter(Boolean).map((s) => `${s.id}x${s.count}`).sort();
+    let furnace = null;
+    g.world.forEachBlockEntity((be, x, y, z) => { furnace = { x, y, z, output: be.output?.count ?? 0, block: g.world.getBlock(x, y, z) }; });
+    const p = g.player.position;
+    return { x: p.x, y: p.y, z: p.z, inv, furnace, time: g.serverCycle.time };
+  });
   await page.evaluate(() => window.__app.quitToTitle());
   await page.waitForSelector('.main-menu', { timeout: 30000 });
   await page.click('text=Singleplayer');
   await page.waitForSelector('.world-item');
   await page.screenshot({ path: `${outDir}/09-world-list.png` });
+});
+
+await step('reload world and verify persistence', async () => {
+  await page.click('.world-item');
+  await page.click('text=Play Selected World');
+  await page.waitForFunction(() => window.__app.game?.ready === true, null, { timeout: 120000 });
+  await frames(5);
+  const loaded = await page.evaluate(() => {
+    const g = window.__app.game;
+    const inv = g.player.inventory.toJSON().filter(Boolean).map((s) => `${s.id}x${s.count}`).sort();
+    const p = g.player.position;
+    return { x: p.x, y: p.y, z: p.z, inv, time: g.serverCycle.time, mode: g.player.gameMode };
+  });
+  if (Math.hypot(loaded.x - snapshot.x, loaded.z - snapshot.z) > 0.5) throw new Error(`position not restored: ${JSON.stringify(loaded)} vs ${JSON.stringify(snapshot)}`);
+  if (loaded.inv.join() !== snapshot.inv.join()) throw new Error(`inventory not restored: ${loaded.inv} vs ${snapshot.inv}`);
+  if (Math.abs(loaded.time - snapshot.time) > 200) throw new Error(`time not restored: ${loaded.time} vs ${snapshot.time}`);
+  if (loaded.mode !== 'survival') throw new Error('game mode not restored');
+  if (snapshot.furnace) {
+    const f = snapshot.furnace;
+    await page.waitForFunction((pos) => {
+      const w = window.__app.game.world;
+      return w.getChunk(pos.x >> 4, pos.z >> 4) && w.getBlockEntity(pos.x, pos.y, pos.z);
+    }, f, { timeout: 60000 });
+    const block = await page.evaluate((pos) => window.__app.game.world.getBlock(pos.x, pos.y, pos.z), f);
+    if (block !== f.block) throw new Error(`furnace block not restored (${block} vs ${f.block})`);
+  }
+  await page.evaluate(() => window.__app.quitToTitle());
+  await page.waitForSelector('.main-menu', { timeout: 30000 });
 });
 
 await browser.close();

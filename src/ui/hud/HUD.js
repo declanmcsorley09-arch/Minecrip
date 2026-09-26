@@ -314,6 +314,8 @@ export class HUD {
       `Entities: ${d.entities}`,
       d.memory !== null ? `JS heap: ${d.memory} MB` : 'JS heap: n/a',
       `Chunk data: ${d.chunkMemory} MB`,
+      'Frame breakdown (ms):',
+      ...d.profile.map(([name, ms]) => `${name}: ${ms.toFixed(2)}`),
     ];
     clear(this.debugLeft);
     clear(this.debugRight);
