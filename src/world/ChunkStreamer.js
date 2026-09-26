@@ -134,6 +134,8 @@ export class ChunkStreamer {
       climate: chunk.climate,
       modifications: chunk.modifications,
       blockEntities: chunk.blockEntities,
+      entityData: chunk.entityData,
+      hadEntities: chunk.hadEntities,
     });
     this.stats.unloaded++;
   }
@@ -237,6 +239,8 @@ export class ChunkStreamer {
       });
       chunk.modifications = cached.modifications;
       chunk.blockEntities = cached.blockEntities;
+      chunk.entityData = cached.entityData;
+      chunk.hadEntities = cached.hadEntities;
       this.stats.fromCache++;
     } else {
       chunk = new Chunk(data.cx, data.cz, data);
@@ -245,6 +249,10 @@ export class ChunkStreamer {
         for (let i = 0; i < mods.length; i++) chunk.modifications.set(mods[i] >>> 8, mods[i] & 255);
         if (saved.blockEntities) {
           for (const be of saved.blockEntities) chunk.blockEntities.set(be.index, be.data);
+        }
+        if (saved.entities && saved.entities.length) {
+          chunk.entityData = saved.entities;
+          chunk.hadEntities = true;
         }
       }
       this.stats.generated++;

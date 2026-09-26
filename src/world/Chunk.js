@@ -44,6 +44,10 @@ export class Chunk {
     this.blockEntities = new Map();
     /** True when there are unsaved modifications. */
     this.dirty = false;
+    /** Serialised entities awaiting spawn (after load) or saving (on unload). @type {object[]|null} */
+    this.entityData = null;
+    /** Whether the saved record currently contains entities. */
+    this.hadEntities = false;
     /** Increments on every block change (used to discard stale meshes). */
     this.version = 0;
     this.recountSections();

@@ -31,7 +31,13 @@ const frames = async (n) => {
 
 const step = async (name, fn) => {
   const t = Date.now();
-  await fn();
+  try {
+    await fn();
+  } catch (err) {
+    await page.screenshot({ path: `${outDir}/failure.png` }).catch(() => {});
+    console.error(`✗ ${name}`);
+    throw err;
+  }
   console.log(`✓ ${name} (${Date.now() - t} ms)`);
 };
 
@@ -129,6 +135,133 @@ await step('switch to survival and open inventory', async () => {
   await page.evaluate(() => window.__app.openInventory());
   await page.waitForSelector('.inv-layout');
   await page.screenshot({ path: `${outDir}/07-survival-inventory.png` });
+  await page.keyboard.press('Escape');
+});
+
+/** Index of the first visible slot element holding an item (by registry name). */
+const slotIndexOf = (name, { output = false } = {}) =>
+  page.evaluate(([n, out]) => {
+    const screen = window.__app.ui.top;
+    const els = [...document.querySelectorAll('.slot-cell')];
+    const view = screen.views.find((v) => (out ? v.slot.output : !v.slot.output && !v.slot.palette) && v.slot.get()?.def?.name === n);
+    return view ? els.indexOf(view.el) : -1;
+  }, [name, output]);
+const slotCenter = async (i) => {
+  const box = await page.locator('.slot-cell').nth(i).boundingBox();
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+};
+/** Shift-clicks a slot using raw mouse/keyboard input. */
+const shiftClickSlot = async (i) => {
+  const c = await slotCenter(i);
+  await page.keyboard.down('Shift');
+  await page.mouse.click(c.x, c.y);
+  await page.keyboard.up('Shift');
+};
+const invCount = (name) => page.evaluate((n) => {
+  const inv = window.__app.game.player.inventory;
+  return inv.slots.reduce((sum, s) => sum + (s && s.def.name === n ? s.count : 0), 0);
+}, name);
+
+await step('craft planks and a crafting table with the mouse', async () => {
+  await page.evaluate(() => {
+    const app = window.__app;
+    app.ui.closeAll();
+    app.game.resume();
+    app.game.player.inventory.clear();
+    app.game.sendChat('/give oak_log 4');
+  });
+  await page.waitForFunction(() => window.__app.game.player.inventory.get(0)?.count === 4);
+  await page.evaluate(() => window.__app.openInventory());
+  await page.waitForSelector('.inv-layout');
+  // Click the logs, place them in the first crafting cell, shift-click the result.
+  await page.locator('.slot-cell').nth(await slotIndexOf('oak_log')).click();
+  await page.locator('.slot-cell').nth(0).click();
+  const out = await slotIndexOf('oak_planks', { output: true });
+  if (out < 0) throw new Error('planks recipe did not match');
+  await page.locator('.slot-cell').nth(out).click({ modifiers: ['Shift'] });
+  if ((await invCount('oak_planks')) !== 16) throw new Error(`expected 16 planks, got ${await invCount('oak_planks')}`);
+  // Drag the planks across the 2x2 grid to split them evenly.
+  await page.locator('.slot-cell').nth(await slotIndexOf('oak_planks')).click();
+  const cells = await Promise.all([0, 1, 2, 3].map(slotCenter));
+  await page.mouse.move(cells[0].x, cells[0].y);
+  await page.mouse.down();
+  for (const c of cells.slice(1)) await page.mouse.move(c.x, c.y, { steps: 4 });
+  await page.mouse.up();
+  const table = await slotIndexOf('crafting_table', { output: true });
+  if (table < 0) throw new Error('crafting table recipe did not match after drag distribution');
+  await page.locator('.slot-cell').nth(table).click({ modifiers: ['Shift'] });
+  if ((await invCount('crafting_table')) < 1) throw new Error('crafting table not crafted');
+  await page.screenshot({ path: `${outDir}/10-crafted.png` });
+  await page.keyboard.press('KeyE');
+  await page.waitForSelector('.inv-layout', { state: 'detached' });
+});
+
+await step('place and use a crafting table', async () => {
+  const opened = await page.evaluate(async () => {
+    const app = window.__app;
+    app.ui.closeAll();
+    app.game.resume();
+    const game = app.game;
+    const inv = game.player.inventory;
+    const idx = inv.slots.findIndex((s) => s && s.def.name === 'crafting_table');
+    const table = inv.get(idx);
+    inv.set(idx, null);
+    inv.set(0, table);
+    inv.select(0);
+    const wait = async (n) => { const t = game.frameCount + n; while (game.frameCount < t) await new Promise((r) => setTimeout(r, 30)); };
+    const rightClick = async () => {
+      game.input.buttons.add(2);
+      game.input.buttonsPressed.add(2);
+      await wait(2);
+      game.input.buttons.delete(2);
+      await wait(3);
+    };
+    // Aim at the ground a couple of blocks ahead, place, then use the table.
+    game.player.pitch = -0.62;
+    await wait(3);
+    const t = game.interaction.target;
+    await rightClick();
+    // Tall grass is replaced in place; solid ground gets the block on top.
+    const placed = game.world.getBlock(t.x, t.y, t.z) === 23 || game.world.getBlock(t.x + t.nx, t.y + t.ny, t.z + t.nz) === 23;
+    if (!placed) return { placed, target: { x: t.x, y: t.y, z: t.z, id: t.id } };
+    await wait(2);
+    await rightClick();
+    return { placed, top: window.__app.ui.top?.constructor.name };
+  });
+  if (opened.top !== 'CraftingTableScreen') throw new Error(`crafting table did not open: ${JSON.stringify(opened)}`);
+  await page.screenshot({ path: `${outDir}/11-crafting-table.png` });
+  await page.keyboard.press('Escape');
+});
+
+await step('smelt iron in a furnace', async () => {
+  await page.evaluate(() => {
+    const app = window.__app;
+    app.ui.closeAll();
+    app.game.resume();
+    app.game.sendChat('/give iron_ore 3');
+    app.game.sendChat('/give coal 1');
+    const p = app.game.player.position;
+    const x = Math.floor(p.x) + 2;
+    const z = Math.floor(p.z);
+    const y = app.game.world.getHeight(x, z);
+    app.game.world.setBlock(x, y, z, 24);
+    app.openContainer({ x, y, z, kind: 'furnace' });
+  });
+  await page.waitForSelector('.flame');
+  await page.waitForFunction(() => window.__app.game.player.inventory.slots.some((s) => s?.def.name === 'coal'));
+  // Shift-click routes ore to the input and coal to the fuel slot.
+  await shiftClickSlot(await slotIndexOf('iron_ore'));
+  await shiftClickSlot(await slotIndexOf('coal'));
+  const state = await page.evaluate(() => {
+    const f = window.__app.ui.top.furnace;
+    for (let i = 0; i < 260; i++) f.tick(0.25);
+    return { input: f.input?.count ?? 0, output: f.output?.count ?? 0, fuel: f.fuel?.count ?? 0 };
+  });
+  if (state.output !== 3) throw new Error(`furnace output ${JSON.stringify(state)}`);
+  await frames(3);
+  await page.screenshot({ path: `${outDir}/12-furnace.png` });
+  await shiftClickSlot(await slotIndexOf('iron_ingot', { output: true }));
+  if ((await invCount('iron_ingot')) !== 3) throw new Error('ingots not collected');
   await page.keyboard.press('Escape');
 });
 

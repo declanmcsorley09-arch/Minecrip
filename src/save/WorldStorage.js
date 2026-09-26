@@ -41,14 +41,14 @@ export class WorldStorage {
    * Loads saved modifications of a chunk.
    * @param {number} cx
    * @param {number} cz
-   * @returns {Promise<{mods: Uint32Array, blockEntities: {index:number, data:object}[]}|null>}
+   * @returns {Promise<{mods: Uint32Array, blockEntities: {index:number, data:object}[], entities: object[]}|null>}
    */
   async loadChunk(cx, cz) {
     const rec = await this.db.get('chunks', [this.worldId, cx, cz]);
     if (!rec) return null;
     const mods = rec.mods instanceof Uint32Array ? rec.mods : new Uint32Array(rec.mods ?? []);
     const blockEntities = (rec.blockEntities ?? []).map((be) => ({ index: be.index, data: reviveBlockEntity(be.data) })).filter((be) => be.data);
-    return { mods, blockEntities };
+    return { mods, blockEntities, entities: Array.isArray(rec.entities) ? rec.entities : [] };
   }
 
   /**
@@ -66,7 +66,7 @@ export class WorldStorage {
     }
     this.savedChunks.add(chunkKey(chunk.cx, chunk.cz));
     const p = this.db
-      .put('chunks', { worldId: this.worldId, cx: chunk.cx, cz: chunk.cz, mods, blockEntities })
+      .put('chunks', { worldId: this.worldId, cx: chunk.cx, cz: chunk.cz, mods, blockEntities, entities: chunk.entityData ?? [] })
       .catch((e) => console.error('Chunk save failed', e))
       .finally(() => this.pendingWrites.delete(p));
     this.pendingWrites.add(p);

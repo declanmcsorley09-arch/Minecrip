@@ -80,6 +80,7 @@ export class Game extends EventEmitter {
     this.autosaveTimer = 0;
     this.time = 0;
     this.pendingLightning = false;
+    this.hideHand = false;
     this.lookDir = new THREE.Vector3();
     this.eye = new THREE.Vector3();
     this.sunFocus = new THREE.Vector3();
@@ -262,10 +263,7 @@ export class Game extends EventEmitter {
 
     this.interaction.on('blockBreak', (b) => this.particles.blockBreak(b.x, b.y, b.z, b.id));
     this.interaction.on('dig', (hit) => this.particles.dig(hit));
-    this.interaction.on('openContainer', (info) => {
-      this.input.unlock();
-      this.emit('openContainer', info);
-    });
+    this.interaction.on('openContainer', (info) => this.emit('openContainer', info));
     this.controller.on('land', ({ distance, blockId }) => {
       if (distance > 2) {
         const p = this.player.position;
@@ -626,7 +624,9 @@ export class Game extends EventEmitter {
       selected: p.inventory.selected,
       flying: p.flying,
     };
+    this.server.storeAllEntities();
     await this.streamer.saveAll();
+    for (const chunk of this.world.chunks.values()) chunk.entityData = null;
     await this.storage.saveMeta({
       name: this.meta.name,
       seed: this.meta.seed,

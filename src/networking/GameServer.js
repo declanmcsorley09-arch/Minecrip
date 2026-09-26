@@ -13,6 +13,7 @@ import { rollDrops } from '../items/Mining.js';
 import { FurnaceState } from '../crafting/Furnace.js';
 import { AABB } from '../physics/AABB.js';
 import { runCommand } from './Commands.js';
+import { isPersistent, serializeEntity, deserializeEntity } from '../entities/EntitySerializer.js';
 
 /**
  * Authoritative game server.
@@ -35,8 +36,9 @@ export class GameServer {
    * @param {import('../world/Weather.js').Weather} opts.weather
    * @param {{x:number,y:number,z:number}} opts.spawn world spawn point
    * @param {object} [opts.rules] game rules
+   * @param {() => number} [opts.random] random source (seedable for tests)
    */
-  constructor({ world, cycle, weather, spawn, rules = {} }) {
+  constructor({ world, cycle, weather, spawn, rules = {}, random = Math.random }) {
     this.world = world;
     this.cycle = cycle;
     this.weather = weather;
@@ -54,7 +56,7 @@ export class GameServer {
     this.tickCount = 0;
     this.pendingEvents = [];
     this.lastWeatherType = weather.type;
-    this.random = Math.random;
+    this.random = random;
     this.tmpBox = new AABB();
 
     this.ctx = {
@@ -79,9 +81,54 @@ export class GameServer {
       for (const drop of rollDrops(id, 0, this.random)) this.spawnItem(drop, x + 0.5, y + 0.3, z + 0.5);
     };
     this.onBlockChanged = (e) => this.broadcastBlock(e.x, e.y, e.z, e.id);
+    this.onChunkAdded = (chunk) => this.restoreChunkEntities(chunk);
+    this.onChunkRemoved = (chunk) => this.storeChunkEntities(chunk, true);
     world.on('blockFall', this.onBlockFall);
     world.on('blockPopped', this.onBlockPopped);
     world.on('blockChanged', this.onBlockChanged);
+    world.on('chunkAdded', this.onChunkAdded);
+    world.on('chunkRemoved', this.onChunkRemoved);
+  }
+
+  /**
+   * Serialises the persistent entities of a chunk into `chunk.entityData`
+   * so they are written with the chunk's save record.
+   * @param {import('../world/Chunk.js').Chunk} chunk
+   * @param {boolean} remove also remove them from the simulation (unload)
+   */
+  storeChunkEntities(chunk, remove) {
+    const list = [];
+    for (const e of this.entities.entities.values()) {
+      if (!isPersistent(e)) continue;
+      if (Math.floor(e.x) >> 4 !== chunk.cx || Math.floor(e.z) >> 4 !== chunk.cz) continue;
+      list.push(serializeEntity(e));
+      if (remove) e.remove();
+    }
+    if (list.length > 0 || chunk.hadEntities) {
+      chunk.entityData = list;
+      chunk.hadEntities = list.length > 0;
+      chunk.dirty = true;
+    }
+  }
+
+  /**
+   * Spawns entities saved with a chunk when it is loaded.
+   * @param {import('../world/Chunk.js').Chunk} chunk
+   */
+  restoreChunkEntities(chunk) {
+    const data = chunk.entityData;
+    chunk.entityData = null;
+    if (!data || data.length === 0) return;
+    chunk.hadEntities = true;
+    for (const d of data) {
+      const e = deserializeEntity(d, this.pathfinder);
+      if (e) this.entities.add(e);
+    }
+  }
+
+  /** Captures entities of every loaded chunk before a full save. */
+  storeAllEntities() {
+    for (const chunk of this.world.chunks.values()) this.storeChunkEntities(chunk, false);
   }
 
   /**
@@ -585,6 +632,8 @@ export class GameServer {
     this.world.off('blockFall', this.onBlockFall);
     this.world.off('blockPopped', this.onBlockPopped);
     this.world.off('blockChanged', this.onBlockChanged);
+    this.world.off('chunkAdded', this.onChunkAdded);
+    this.world.off('chunkRemoved', this.onChunkRemoved);
     this.entities.clear();
     for (const p of [...this.playerList]) this.disconnect(p);
   }

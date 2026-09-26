@@ -218,6 +218,7 @@ export class App {
   openContainer(info) {
     if (!this.game) return;
     this.expectUnlock = true;
+    this.input.unlock();
     const screen = info.kind === 'furnace' ? new FurnaceScreen(this.ui, this.game, info) : new CraftingTableScreen(this.ui, this.game);
     this.ui.open(screen);
     this.game.setInputEnabled(false);

@@ -12,6 +12,7 @@ import { createLocalTransportPair } from '../src/networking/LocalTransport.js';
 import { Pathfinder } from '../src/entities/ai/Pathfinder.js';
 import { BlockIds } from '../src/blocks/index.js';
 import { ItemIds } from '../src/items/index.js';
+import { SeededRandom } from '../src/utils/random.js';
 
 function setup(seed = 4242, radius = 2) {
   const gen = new TerrainGenerator(seed);
@@ -23,7 +24,8 @@ function setup(seed = 4242, radius = 2) {
     world.addChunk(new Chunk(cx, cz, { ...g, light }));
   }
   const spawnY = world.getHeight(8, 8);
-  const server = new GameServer({ world, cycle: new DayNightCycle(6000), weather: new Weather(), spawn: { x: 8.5, y: spawnY, z: 8.5 }, rules: { mobSpawning: false } });
+  const rng = new SeededRandom(seed);
+  const server = new GameServer({ world, cycle: new DayNightCycle(6000), weather: new Weather(() => rng.next()), spawn: { x: 8.5, y: spawnY, z: 8.5 }, rules: { mobSpawning: false }, random: () => rng.next() });
   const [ct, st] = createLocalTransportPair();
   server.accept(st, { sharedWorld: true });
   const client = new GameClient(ct, { world, sharedWorld: true });
@@ -71,7 +73,10 @@ test('handshake, block edits and validation', () => {
   let picked = null;
   client.on('pickup', (m) => { picked = m; });
   step(server, client, 1.0);
-  client.requestPickup(items[0].id, 64);
+  const drop = items[0];
+  client.sendPlayerState({ x: drop.x, y: drop.y, z: drop.z, yaw: 0, pitch: 0, onGround: true });
+  step(server, client);
+  client.requestPickup(drop.id, 64);
   step(server, client, 0.1);
   assert.equal(picked?.stack.id, ItemIds.cobblestone);
   step(server, client, 0.1);
@@ -140,4 +145,23 @@ test('pathfinder navigates around obstacles and up steps', () => {
   assert.equal(last.x, 10);
   assert.ok(path.some((p) => Math.abs(p.z) >= 6), 'went around the wall');
   assert.ok(!path.some((p) => p.x === 5 && Math.abs(p.z) <= 5 && p.y <= 12), 'never inside the wall');
+});
+
+test('passive mobs and items persist with their chunk', () => {
+  const { world, server } = setup(7);
+  const chunk = world.getChunk(0, 0);
+  const y = world.getHeight(5, 5);
+  const sheep = server.spawner.spawn(server.ctx, 'sheep', 5.5, y, 5.5);
+  server.spawnItem({ id: ItemIds.diamond, count: 3 }, 6.5, y + 0.5, 6.5);
+  server.spawner.spawn(server.ctx, 'zombie', 7.5, y, 7.5);
+  world.removeChunk(0, 0);
+  assert.ok(sheep.removed);
+  assert.equal(chunk.entityData.length, 2, 'sheep + item saved, zombie not');
+  assert.ok(chunk.dirty);
+  server.entities.tick(0.05, server.ctx);
+  world.addChunk(chunk);
+  const types = [...server.entities.entities.values()].map((e) => e.type).sort();
+  assert.ok(types.includes('sheep') && types.includes('item'), types.join(','));
+  const item = [...server.entities.entities.values()].find((e) => e.type === 'item');
+  assert.equal(item.stack.count, 3);
 });
