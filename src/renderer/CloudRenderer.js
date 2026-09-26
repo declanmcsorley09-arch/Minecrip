@@ -167,6 +167,7 @@ export class CloudRenderer {
    * @param {number} weatherRain 0..1 (faster wind in storms)
    */
   update(dt, camera, atmo, weatherRain) {
+    this.mesh.visible = this.enabled !== false && !atmo.underwater;
     const period = TEX_SIZE * this.cellSize;
     const speed = 1 + weatherRain * 1.5;
     this.wind.x = (this.wind.x + this.windSpeed.x * speed * dt) % period;
@@ -186,6 +187,7 @@ export class CloudRenderer {
    * @param {boolean} visible
    */
   setVisible(visible) {
+    this.enabled = visible;
     this.mesh.visible = visible;
   }
 

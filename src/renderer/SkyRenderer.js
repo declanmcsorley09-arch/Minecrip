@@ -128,6 +128,8 @@ export class SkyRenderer {
    * @param {number} time seconds (for twinkling)
    */
   update(camera, atmo, time) {
+    // Underwater the view ends in fog; the sky would show through past it.
+    this.group.visible = !atmo.underwater;
     this.group.position.copy(camera.position);
     const u = this.domeUniforms;
     u.uZenith.value.copy(atmo.zenith);
