@@ -52,7 +52,8 @@ export class BlockTextureArray {
     tex.unpackAlignment = 1;
     tex.needsUpdate = true;
     this.texture = tex;
-    this.uploaded = false;
+    /** Renderer the GPU copy currently belongs to. */
+    this.uploadedTo = null;
   }
 
   /**
@@ -123,7 +124,8 @@ export class BlockTextureArray {
    * @param {THREE.WebGLRenderer} renderer
    */
   upload(renderer) {
-    if (this.uploaded) return;
+    if (this.uploadedTo === renderer) return;
+    this.texture.needsUpdate = true;
     renderer.initTexture(this.texture);
     const gl = renderer.getContext();
     const props = renderer.properties.get(this.texture);
@@ -137,7 +139,7 @@ export class BlockTextureArray {
       const s = SIZE >> l;
       gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, l, 0, 0, 0, s, s, this.count, gl.RGBA, gl.UNSIGNED_BYTE, this.levels[l]);
     }
-    this.uploaded = true;
+    this.uploadedTo = renderer;
   }
 
   /**
@@ -149,8 +151,9 @@ export class BlockTextureArray {
     return this.images[layer];
   }
 
-  /** Releases GPU memory. */
-  dispose() {
+  /** Releases the GPU copy (CPU images are kept for reuse by later sessions). */
+  releaseGpu() {
     this.texture.dispose();
+    this.uploadedTo = null;
   }
 }
