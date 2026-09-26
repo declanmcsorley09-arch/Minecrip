@@ -25,6 +25,8 @@ export class InputManager extends EventEmitter {
     this.dy = 0;
     this.wheel = 0;
     this.locked = false;
+    /** Whether the game currently wants the pointer locked. */
+    this.wantLock = false;
     /** When false, gameplay input is ignored (menus open). */
     this.enabled = true;
     this.lastPress = new Map();
@@ -73,6 +75,12 @@ export class InputManager extends EventEmitter {
     };
     this.onLockChange = () => {
       const locked = document.pointerLockElement === this.element;
+      // requestPointerLock is asynchronous: a grant that arrives after
+      // unlock() (e.g. a screen opened meanwhile) is released immediately.
+      if (locked && !this.wantLock) {
+        document.exitPointerLock();
+        return;
+      }
       if (locked === this.locked) return;
       this.locked = locked;
       if (!locked) this.releaseAll();
@@ -189,10 +197,12 @@ export class InputManager extends EventEmitter {
 
   /** Requests pointer lock on the game canvas. */
   lock() {
+    this.wantLock = true;
     if (document.pointerLockElement === this.element) return;
     const req = this.element.requestPointerLock?.({ unadjustedMovement: true });
     if (req && typeof req.catch === 'function') {
       req.catch(() => {
+        if (!this.wantLock) return;
         const fallback = this.element.requestPointerLock?.();
         if (fallback && typeof fallback.catch === 'function') fallback.catch(() => {});
       });
@@ -201,6 +211,7 @@ export class InputManager extends EventEmitter {
 
   /** Exits pointer lock. */
   unlock() {
+    this.wantLock = false;
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
