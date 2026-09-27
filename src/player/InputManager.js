@@ -27,12 +27,25 @@ export class InputManager extends EventEmitter {
     this.locked = false;
     /** Whether the game currently wants the pointer locked. */
     this.wantLock = false;
+    /**
+     * Set when the browser refuses pointer lock outright (e.g. a sandboxed
+     * iframe). The game then runs in "virtual lock" mode: the cursor stays
+     * visible, mouse movement still turns the camera and Esc pauses.
+     */
+    this.lockBlocked = false;
     /** When false, gameplay input is ignored (menus open). */
     this.enabled = true;
     this.lastPress = new Map();
     this.doubleTaps = new Set();
 
     this.onKeyDown = (e) => {
+      if (e.code === 'Escape' && this.lockBlocked && this.locked) {
+        // Acts like the browser releasing the lock; the pause menu that opens
+        // must not see this same keypress (Esc would close it again).
+        e.stopImmediatePropagation();
+        this.unlock();
+        return;
+      }
       if (e.repeat) {
         if (this.locked) e.preventDefault();
         return;
@@ -198,20 +211,44 @@ export class InputManager extends EventEmitter {
   /** Requests pointer lock on the game canvas. */
   lock() {
     this.wantLock = true;
+    if (this.lockBlocked) {
+      this.setVirtualLock(true);
+      return;
+    }
     if (document.pointerLockElement === this.element) return;
     const req = this.element.requestPointerLock?.({ unadjustedMovement: true });
     if (req && typeof req.catch === 'function') {
       req.catch(() => {
         if (!this.wantLock) return;
         const fallback = this.element.requestPointerLock?.();
-        if (fallback && typeof fallback.catch === 'function') fallback.catch(() => {});
+        if (fallback && typeof fallback.catch === 'function') {
+          fallback.catch((err) => {
+            // Blocked by policy (not merely missing a user gesture).
+            if (/sandbox/i.test(err?.message ?? '')) {
+              this.lockBlocked = true;
+              if (this.wantLock) this.setVirtualLock(true);
+            }
+          });
+        }
       });
+    } else if (!this.element.requestPointerLock) {
+      this.lockBlocked = true;
+      this.setVirtualLock(true);
     }
+  }
+
+  /** Emulates lock state changes when real pointer lock is unavailable. @private */
+  setVirtualLock(locked) {
+    if (locked === this.locked) return;
+    this.locked = locked;
+    if (!locked) this.releaseAll();
+    this.emit('pointerlock', locked);
   }
 
   /** Exits pointer lock. */
   unlock() {
     this.wantLock = false;
+    if (this.lockBlocked) this.setVirtualLock(false);
     if (document.pointerLockElement) document.exitPointerLock();
   }
 

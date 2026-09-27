@@ -260,7 +260,11 @@ export class App {
       return;
     }
     if (this.ui.hasScreen || game.paused || game.player.dead) return;
-    if (code === binds.inventory) this.openInventory();
+    if (code === binds.inventory) {
+      // Stop the same keypress reaching the new screen (E also closes it).
+      e.stopImmediatePropagation();
+      this.openInventory();
+    }
     else if (code === binds.chat) {
       e.preventDefault();
       this.openChat('');
